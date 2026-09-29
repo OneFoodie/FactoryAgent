@@ -547,7 +547,28 @@ button{cursor:pointer}
 }
 .disclaimer b{color:var(--txt-1);font-weight:500}
 
-/*__CSS_CARD__*/
+/* ===== toast ===== */
+.toastwrap{
+  position:fixed;right:16px;bottom:16px;z-index:60;
+  display:flex;flex-direction:column;gap:8px;pointer-events:none;
+}
+.toast{
+  display:flex;align-items:center;gap:9px;
+  font-size:12.5px;color:var(--txt-0);
+  padding:9px 13px;border-radius:var(--r);max-width:320px;
+  border:1px solid var(--line-2);background:rgba(20,24,33,.97);
+  box-shadow:var(--shadow);backdrop-filter:blur(8px);
+  opacity:0;transform:translateY(10px) scale(.98);
+  transition:.24s cubic-bezier(.2,.7,.3,1);
+}
+.toast.is-in{opacity:1;transform:none}
+.toast__dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--txt-2)}
+.toast--ok .toast__dot{background:var(--green);box-shadow:0 0 8px var(--green)}
+.toast--warn .toast__dot{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.toast--err .toast__dot{background:var(--red);box-shadow:0 0 8px var(--red)}
+.toast--info .toast__dot{background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
+.toast__msg{min-width:0}
+
 /* ===== dashboard views ===== */
 .scroll{flex:1;min-height:0;overflow-y:auto}
 .page{max-width:1180px;margin:0 auto;padding:22px 26px 40px}
@@ -1622,7 +1643,396 @@ button{cursor:pointer}
   </main>
 </div>
 <script>
-/*__JS__*/
+(function(){
+  "use strict";
+
+  var app = document.getElementById("app");
+  var railToggle = document.getElementById("railToggle");
+  var tbTitle = document.getElementById("tbTitle");
+  var tbCrumb = document.getElementById("tbCrumb");
+  var clock = document.getElementById("clock");
+  var stream = document.getElementById("stream");
+  var streamInner = document.getElementById("streamInner");
+  var quick = document.getElementById("quick");
+  var composer = document.getElementById("composer");
+  var input = document.getElementById("input");
+  var send = document.getElementById("send");
+  var devGrid = document.getElementById("devGrid");
+  var devEmpty = document.getElementById("devEmpty");
+
+  var META = {
+    chat:    { t: "对话问答", c: "FACTORY / ASSIST" },
+    devices: { t: "设备监控", c: "FACTORY / SCADA" },
+    tickets: { t: "工单任务", c: "FACTORY / EAM" },
+    reports: { t: "报表分析", c: "FACTORY / BI" }
+  };
+
+  var HINT = "询问产线状况、设备故障、工单或数据报表…（Enter 发送 / Shift+Enter 换行）";
+
+  function pad(n){ return n < 10 ? "0" + n : "" + n; }
+  function now(){
+    var d = new Date();
+    return pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+  function tickClock(){
+    if(!clock) return;
+    var d = new Date();
+    clock.textContent = pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+  }
+
+  var toastWrap = document.createElement("div");
+  toastWrap.className = "toastwrap";
+  document.body.appendChild(toastWrap);
+
+  function toast(msg, kind, ms){
+    var el = document.createElement("div");
+    el.className = "toast toast--" + (kind || "info");
+    var dot = document.createElement("span");
+    dot.className = "toast__dot";
+    var txt = document.createElement("span");
+    txt.className = "toast__msg";
+    txt.textContent = msg;
+    el.appendChild(dot);
+    el.appendChild(txt);
+    toastWrap.appendChild(el);
+    requestAnimationFrame(function(){ el.classList.add("is-in"); });
+    setTimeout(function(){
+      el.classList.remove("is-in");
+      setTimeout(function(){ el.remove(); }, 300);
+    }, ms || 2800);
+  }
+
+  var navItems = document.querySelectorAll(".nav__item[data-view]");
+  var viewEls = document.querySelectorAll(".view");
+
+  function setView(name, scope){
+    if(!META[name]) name = "chat";
+    viewEls.forEach(function(v){
+      v.classList.toggle("is-active", v.id === "view-" + name);
+    });
+    navItems.forEach(function(b){
+      var sameView = b.getAttribute("data-view") === name;
+      var isScope = b.hasAttribute("data-scope");
+      var on = isScope ? (sameView && b.getAttribute("data-scope") === scope) : sameView;
+      b.classList.toggle("is-active", on);
+      if(b.getAttribute("role") === "tab") b.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    if(tbTitle) tbTitle.textContent = META[name].t;
+    if(tbCrumb) tbCrumb.textContent = META[name].c;
+  }
+
+  navItems.forEach(function(b){
+    b.addEventListener("click", function(){
+      var scope = b.getAttribute("data-scope");
+      var label = b.querySelector(".lbl");
+      if(scope){
+        setView("chat", scope);
+        if(input){
+          input.placeholder = "在「" + (label ? label.textContent.trim() : "知识域") + "」范围内提问…（Enter 发送 / Shift+Enter 换行）";
+          input.focus();
+        }
+        toast("已限定检索范围：" + (label ? label.textContent.trim() : ""), "info");
+      } else {
+        setView(b.getAttribute("data-view"));
+        if(input) input.placeholder = HINT;
+      }
+    });
+  });
+
+  if(railToggle){
+    railToggle.addEventListener("click", function(){
+      var collapsed = app.classList.toggle("is-collapsed");
+      railToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      railToggle.setAttribute("aria-label", collapsed ? "展开侧栏" : "收起侧栏");
+    });
+  }
+
+  window.addEventListener("keydown", function(e){
+    if(!(e.metaKey || e.ctrlKey) || e.altKey) return;
+    var map = { "1": "chat", "2": "devices", "3": "tickets", "4": "reports" };
+    var v = map[e.key];
+    if(v){ e.preventDefault(); setView(v); }
+  });
+
+  function filterDevices(f){
+    if(!devGrid) return;
+    var shown = 0;
+    devGrid.querySelectorAll(".dev").forEach(function(d){
+      var ok = f === "all" || d.getAttribute("data-state") === f;
+      d.hidden = !ok;
+      if(ok) shown++;
+    });
+    if(devEmpty) devEmpty.hidden = shown > 0;
+  }
+
+  document.querySelectorAll(".seg").forEach(function(seg){
+    seg.addEventListener("click", function(e){
+      var btn = e.target.closest("button");
+      if(!btn || !seg.contains(btn)) return;
+      seg.querySelectorAll("button").forEach(function(b){
+        b.classList.toggle("on", b === btn);
+      });
+      var f = btn.getAttribute("data-filter");
+      if(f){
+        filterDevices(f);
+      } else {
+        toast("视图已切换：" + btn.textContent.trim(), "info");
+      }
+    });
+  });
+
+  var ACT = {
+    dispatch: { k: "ok",   m: "已派发维修工单 · WO-2042（A3 注塑机模温超限）" },
+    detail:   { k: "info", m: "正在打开设备详情 · DEV-A3-02" },
+    history:  { k: "info", m: "正在调取 DEV-A3-02 近 24h 历史曲线" },
+    export:   { k: "ok",   m: "已导出 CSV · FPY-7d-lines.csv" },
+    report:   { k: "info", m: "日报生成中，完成后可在「报表分析」查看" },
+    confirm:  { k: "ok",   m: "工单 WO-2041 已确认并派工给李工" },
+    edit:     { k: "info", m: "已进入工单编辑（草稿 WO-2041）" },
+    reject:   { k: "warn", m: "已驳回工单草稿 · WO-2041" }
+  };
+
+  document.addEventListener("click", function(e){
+    var act = e.target.closest("[data-act]");
+    if(act){
+      var a = ACT[act.getAttribute("data-act")];
+      if(a) toast(a.m, a.k);
+      return;
+    }
+    var dev = e.target.closest(".dev[data-state]");
+    if(dev){
+      var id = dev.querySelector(".dev__id");
+      var nm = dev.querySelector(".dev__nm");
+      toast((id ? id.textContent.trim() : "设备") + " · " + (nm ? nm.textContent.trim() : "") + " · 详情已打开", "info");
+      return;
+    }
+    var tk = e.target.closest(".tk");
+    if(tk){
+      var tid = tk.querySelector(".tk__id");
+      toast("工单 " + (tid ? tid.textContent.trim() : "") + " · 已打开详情", "info");
+      return;
+    }
+    var ib = e.target.closest(".iconbtn");
+    if(ib){
+      toast(ib.getAttribute("aria-label") === "通知" ? "通知中心：3 条待确认告警" : "设置面板（原型占位）", "info");
+      return;
+    }
+    var pb = e.target.closest(".page__hd .btn");
+    if(pb){
+      var t = pb.textContent.trim();
+      if(t.indexOf("刷新") >= 0) toast("已刷新设备状态 · 12 台设备同步完成", "ok");
+      else if(t.indexOf("新建") >= 0) toast("新建工单（原型占位）· 已填充默认模板", "info");
+      else if(t.indexOf("导出") >= 0) toast("已导出 W39 生产运营日报", "ok");
+      else toast("已执行：" + t, "info");
+    }
+  });
+
+  function scrollBottom(){
+    if(stream) stream.scrollTop = stream.scrollHeight;
+  }
+
+  function messageShell(dir, time){
+    var wrap = document.createElement("div");
+    wrap.className = "msg msg--" + dir;
+    var ava = document.createElement("div");
+    ava.className = "msg__ava";
+    ava.setAttribute("aria-hidden", "true");
+    ava.textContent = dir === "user" ? "张" : "FA";
+    var body = document.createElement("div");
+    body.className = "msg__body";
+    var meta = document.createElement("div");
+    meta.className = "msg__meta";
+    var who = document.createElement("span");
+    who.className = "msg__who";
+    who.textContent = dir === "user" ? "张伟" : "产线智能体";
+    var role = document.createElement("span");
+    role.className = "msg__role";
+    role.textContent = dir === "user" ? "user" : "assistant";
+    var tm = document.createElement("span");
+    tm.className = "msg__time";
+    tm.textContent = time || now();
+    meta.appendChild(who);
+    meta.appendChild(role);
+    meta.appendChild(tm);
+    body.appendChild(meta);
+    wrap.appendChild(ava);
+    wrap.appendChild(body);
+    return { wrap: wrap, body: body };
+  }
+
+  function addUserMsg(text){
+    var m = messageShell("user");
+    var txt = document.createElement("div");
+    txt.className = "msg__text";
+    var p = document.createElement("p");
+    p.textContent = text;
+    txt.appendChild(p);
+    m.body.appendChild(txt);
+    streamInner.appendChild(m.wrap);
+    scrollBottom();
+  }
+
+  function addAgentMsg(paras, sources){
+    var m = messageShell("agent");
+    var txt = document.createElement("div");
+    txt.className = "msg__text";
+    paras.forEach(function(s){
+      var p = document.createElement("p");
+      p.textContent = s;
+      txt.appendChild(p);
+    });
+    m.body.appendChild(txt);
+    if(sources && sources.length){
+      var line = document.createElement("div");
+      line.className = "srcline";
+      var lab = document.createElement("span");
+      lab.textContent = "数据源";
+      line.appendChild(lab);
+      sources.forEach(function(s){
+        var sp = document.createElement("span");
+        sp.className = "src";
+        sp.textContent = s;
+        line.appendChild(sp);
+      });
+      m.body.appendChild(line);
+    }
+    streamInner.appendChild(m.wrap);
+    scrollBottom();
+  }
+
+  function showTyping(){
+    var m = messageShell("agent");
+    var typing = document.createElement("div");
+    typing.className = "typing";
+    var dots = document.createElement("div");
+    dots.className = "typing__dots";
+    for(var i = 0; i < 3; i++) dots.appendChild(document.createElement("i"));
+    var step = document.createElement("span");
+    step.className = "typing__step";
+    step.textContent = "正在检索 MES 实时数据…";
+    typing.appendChild(dots);
+    typing.appendChild(step);
+    m.body.appendChild(typing);
+    streamInner.appendChild(m.wrap);
+    scrollBottom();
+    return { wrap: m.wrap, step: step };
+  }
+
+  function replyFor(q){
+    if(/良率|fpy|质量|合格/i.test(q)){
+      return { paras: [
+        "已调取近 7 天一次良率（FPY）数据。当前三号线 98.9%、一号线 98.2%、二号线 97.5%，整体在目标 98.5% 附近波动。",
+        "建议关注二号线的连续微降趋势，可结合 A2 注塑机模温波动一并复核。"
+      ], src: ["MES-QC · FPY 7d", "刷新于 " + now()] };
+    }
+    if(/告警|报警|异常|待确认/i.test(q)){
+      return { paras: [
+        "当前共有 3 条待确认告警：A3 注塑机模温超上限（218°C / 205°C）、B1 视觉复检通过率回落、E5 空压机组压力接近下限。",
+        "其中 A3 已在 07:51 自动降速至 60% 运行，建议优先处置。"
+      ], src: ["SCADA · 实时告警", "刷新于 " + now()] };
+    }
+    if(/曲线|24|历史|趋势/i.test(q)){
+      return { paras: [
+        "已生成 DEV-A3-02 近 24 小时运行曲线。模温自 07:39 起持续上行并突破 205°C 上限，节拍同步由 40.3s 抬升至 48.2s。",
+        "冷却水路流量在故障前 6 分钟出现阶跃下降，指向水路局部堵塞。"
+      ], src: ["SCADA · 24h 高频", "刷新于 " + now()] };
+    }
+    if(/sop|作业|指导|处置|规程/i.test(q)){
+      return { paras: [
+        "匹配到 SOP-INJ-07 §4.2「注塑机模温超限处置」。核心步骤：① 停机前确认降速保护已生效；② 检查冷却水路进出口压差；③ 清洗过滤网并复测模温；④ 连续 10min 回落后恢复满负荷。"
+      ], src: ["SOP 知识库 · 命中 1 篇", "匹配度 高"] };
+    }
+    if(/oee|效率|产能|达成/i.test(q)){
+      return { paras: [
+        "本周综合 OEE 84.6%（环比 +2.3%），一号线 88.1%、二号线 82.4%、三号线 83.3%，目标值 85.0%。",
+        "主要损失来自设备故障（35%）与换模换料（25%）。"
+      ], src: ["BI · W39 OEE", "刷新于 " + now()] };
+    }
+    if(/工单|维修|派工|任务/i.test(q)){
+      return { paras: [
+        "当前共 7 个未关闭工单：待派工 2、处理中 2、待验收 1、已完成 2。其中 WO-2041（A3 模温超限）为本班优先级最高。",
+        "确认草稿 WO-2041 后可一键派工给李工。"
+      ], src: ["EAM · 工单台账", "刷新于 " + now()] };
+    }
+    if(/产线|快照|三号线|二号线|一号线|line/i.test(q)){
+      return { paras: [
+        "三号线整体运行正常，但 A3 注塑机模温已连续超限 12 分钟（218°C / 上限 205°C），系统已自动降速至 60%。",
+        "本班产出 1,284 件，节拍 42.6s，OEE 86.4%。"
+      ], src: ["MES 实时接口", "SCADA · 12 台设备", "刷新于 " + now()] };
+    }
+    return { paras: [
+      "已收到：「" + q + "」。我已在 MES / SCADA / SOP 知识库中检索相关内容。",
+      "如需更精确的结果，可指定产线（如三号线）、设备编号（如 DEV-A3-02）或时间范围（如近 24 小时）。"
+    ], src: ["MES / SCADA / SOP", "刷新于 " + now()] };
+  }
+
+  var busy = false;
+
+  function autoGrow(){
+    if(!input) return;
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 150) + "px";
+  }
+
+  function sendMessage(text){
+    if(busy) return;
+    var q = (text != null ? text : (input ? input.value : "")).trim();
+    if(!q) return;
+    addUserMsg(q);
+    if(input) input.value = "";
+    if(send) send.disabled = true;
+    autoGrow();
+    busy = true;
+
+    var steps = ["正在检索 MES 实时数据…", "正在比对 SOP 知识库…", "正在生成回复…"];
+    var t = showTyping();
+    var i = 0;
+    var iv = setInterval(function(){
+      i++;
+      if(i < steps.length && t.step) t.step.textContent = steps[i];
+    }, 650);
+
+    setTimeout(function(){
+      clearInterval(iv);
+      t.wrap.remove();
+      var r = replyFor(q);
+      addAgentMsg(r.paras, r.src);
+      busy = false;
+      scrollBottom();
+    }, 2000);
+  }
+
+  if(composer){
+    composer.addEventListener("submit", function(e){
+      e.preventDefault();
+      sendMessage();
+    });
+  }
+  if(input){
+    input.addEventListener("input", function(){
+      autoGrow();
+      if(send) send.disabled = input.value.trim().length === 0;
+    });
+    input.addEventListener("keydown", function(e){
+      if(e.key === "Enter" && !e.shiftKey && !e.isComposing){
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+  }
+  if(quick){
+    quick.addEventListener("click", function(e){
+      var chip = e.target.closest(".qchip");
+      if(!chip) return;
+      sendMessage(chip.getAttribute("data-q"));
+    });
+  }
+
+  setView("chat");
+  tickClock();
+  setInterval(tickClock, 1000);
+  autoGrow();
+})();
 </script>
 </body>
 </html>
