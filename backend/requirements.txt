@@ -1,0 +1,5 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+langchain>=0.2
+langchain-openai>=0.1.7
+python-dotenv>=1.0
